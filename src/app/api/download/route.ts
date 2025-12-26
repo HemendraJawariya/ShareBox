@@ -52,7 +52,7 @@ export async function GET(request: NextRequest) {
         'Expires': '0',
       });
 
-      return new NextResponse(fileShare.fileData, { headers, status: 200 });
+      return new NextResponse(fileShare.fileData as any, { headers, status: 200 });
     }
 
     // If not in memory and Supabase is configured, try Supabase
@@ -109,7 +109,7 @@ export async function GET(request: NextRequest) {
         'Expires': '0',
       });
 
-      return new NextResponse(fileBuffer, { headers, status: 200 });
+      return new NextResponse(fileBuffer as any, { headers, status: 200 });
     }
 
     // File not found in either storage
