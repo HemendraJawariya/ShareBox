@@ -100,23 +100,25 @@ export async function POST(request: NextRequest) {
       isDownloaded: false,
     };
 
-    // Save to in-memory database (for local use)
+    // Save to in-memory database (local development)
     saveFileShare(fileShareData);
 
-    // For Vercel serverless: encode encrypted data in URL so it persists across requests
-    // This allows the file to be accessed from any server instance
-    const encryptedDataEncoded = Buffer.from(encryptedData).toString('base64');
-    const shareUrlWithData = generateShareUrl(fileId, accessToken) + `&data=${encryptedDataEncoded}&size=${file.size}&name=${encodeURIComponent(file.name)}&expires=${expiryDate.toISOString()}`;
+    // Generate standard share URL
+    const shareUrl = generateShareUrl(fileId, accessToken);
 
+    // Return response with file metadata and encrypted data
+    // Client will store encrypted data in sessionStorage for Vercel deployment
     return NextResponse.json(
       {
         success: true,
         fileId,
         accessToken,
         fileName: file.name,
+        fileSize: file.size,
         expiresAt: fileShareData.expiresAt,
-        shareUrl: shareUrlWithData,
-        storage: 'url-encoded',
+        shareUrl,
+        encryptedData: encryptedData, // Send encrypted data to client
+        maxDownloads,
       },
       { status: 200, headers }
     );

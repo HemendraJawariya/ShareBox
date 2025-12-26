@@ -128,6 +128,20 @@ export default function FileUpload() {
           )
         );
 
+        // Store encrypted data in sessionStorage for Vercel deployment
+        // This allows share links to work across different serverless instances
+        if (response.data?.encryptedData && response.data?.fileId) {
+          const fileData = {
+            fileId: response.data.fileId,
+            encryptedData: response.data.encryptedData,
+            fileName: response.data.fileName,
+            fileSize: response.data.fileSize,
+            expiresAt: response.data.expiresAt,
+            maxDownloads: response.data.maxDownloads,
+          };
+          sessionStorage.setItem(`file_${response.data.fileId}`, JSON.stringify(fileData));
+        }
+
         addFile({
           id: fileId,
           name: file.name,

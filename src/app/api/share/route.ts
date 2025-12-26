@@ -7,10 +7,6 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const fileId = searchParams.get('fileId');
     const token = searchParams.get('token');
-    const encryptedDataParam = searchParams.get('data');
-    const fileName = searchParams.get('name');
-    const fileSize = searchParams.get('size');
-    const expiresParam = searchParams.get('expires');
 
     // If no parameters provided, return helpful error
     if (!fileId || !token) {
@@ -22,32 +18,6 @@ export async function GET(request: NextRequest) {
         },
         { status: 400 }
       );
-    }
-
-    // Try URL parameters first (Vercel serverless approach)
-    if (encryptedDataParam && fileName && fileSize && expiresParam) {
-      const expiryDate = new Date(expiresParam);
-      const expired = expiryDate < new Date();
-      const now = new Date();
-      const diffMs = expiryDate.getTime() - now.getTime();
-      const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
-      const diffHours = Math.floor((diffMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-      const diffMinutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
-
-      return NextResponse.json({
-        fileId,
-        fileName: decodeURIComponent(fileName),
-        fileSize: parseInt(fileSize),
-        fileType: 'application/octet-stream',
-        uploadedAt: new Date().toISOString(),
-        expiresAt: expiryDate.toISOString(),
-        downloadCount: 0,
-        maxDownloads: undefined,
-        isExpired: expired,
-        expiryIn: { days: diffDays > 0 ? diffDays : 0, hours: diffHours, minutes: diffMinutes },
-        canDownload: !expired,
-        storage: 'url-encoded',
-      });
     }
 
     const fileShare = getFileShare(fileId);

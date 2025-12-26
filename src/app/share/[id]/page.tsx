@@ -80,9 +80,24 @@ export default function SharePage() {
 
     setDownloading(true);
     try {
-      const response = await fetch(
-        `/api/download?fileId=${fileId}&token=${token}`
-      );
+      // Check sessionStorage for encrypted data (for Vercel deployment)
+      const storedFile = sessionStorage.getItem(`file_${fileId}`);
+      let downloadUrl = `/api/download?fileId=${fileId}&token=${token}`;
+      
+      if (storedFile) {
+        try {
+          const fileData = JSON.parse(storedFile);
+          // Pass encrypted data and metadata to download endpoint
+          downloadUrl += `&encryptedData=${encodeURIComponent(fileData.encryptedData)}`;
+          downloadUrl += `&name=${encodeURIComponent(shareInfo.fileName)}`;
+          downloadUrl += `&size=${shareInfo.fileSize}`;
+          downloadUrl += `&expires=${encodeURIComponent(new Date(shareInfo.expiresAt).toISOString())}`;
+        } catch (e) {
+          console.log('Could not parse stored file, using default endpoint');
+        }
+      }
+
+      const response = await fetch(downloadUrl);
 
       if (!response.ok) {
         if (response.status === 410) {
