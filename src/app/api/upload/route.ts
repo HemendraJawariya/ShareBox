@@ -102,31 +102,10 @@ export async function POST(request: NextRequest) {
     // Save to in-memory database
     saveFileShare(fileShareData);
 
-    // Upload to Supabase if configured (in background, don't wait)
-    if (isSupabaseConfigured()) {
-      const encryptedBuffer = Buffer.from(encryptedData, 'utf-8');
-      uploadToSupabase(
-        fileId,
-        encryptedBuffer,
-        {
-          fileName: file.name,
-          fileSize: file.size.toString(),
-          accessToken,
-        }
-      ).then(() => {
-        // Create database record after upload succeeds
-        createShareRecord({
-          id: fileId,
-          fileName: file.name,
-          fileSize: file.size,
-          encryptedKey: accessToken,
-          accessToken,
-          expiresAt: expiryDate.toISOString(),
-          maxDownloads,
-          createdBy: 'anonymous',
-        }).catch(err => console.error('DB record creation failed:', err));
-      }).catch(err => console.error('Supabase upload failed:', err));
-    }
+    // Note: Supabase uploads disabled on Vercel free tier
+    // Vercel doesn't allow outbound connections that cause socket timeouts
+    // Files are stored in-memory and accessible immediately via share links
+    // For production with cloud storage, use a paid Vercel plan or self-hosted solution
 
     return NextResponse.json(
       {
@@ -135,7 +114,7 @@ export async function POST(request: NextRequest) {
         accessToken,
         fileName: file.name,
         expiresAt: fileShareData.expiresAt,
-        storage: isSupabaseConfigured() ? 'supabase' : 'memory',
+        storage: 'memory',
       },
       { status: 200, headers }
     );
