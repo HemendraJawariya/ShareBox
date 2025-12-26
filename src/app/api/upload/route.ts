@@ -10,8 +10,8 @@ import {
   isSupabaseConfigured,
 } from '@/lib/supabase';
 
-// Configure for large file uploads - 1 hour timeout for 50GB max
-export const maxDuration = 3600;
+// Configure for large file uploads - 5 minutes max for Vercel hobby plan
+export const maxDuration = 300;
 
 export async function POST(request: NextRequest) {
   // Set response headers for large file uploads
