@@ -46,13 +46,13 @@ export async function GET(request: NextRequest) {
 
       const headers = new Headers({
         'Content-Type': 'application/octet-stream',
-        'Content-Disposition': `attachment; filename="${fileShare.fileName}"`,
+        'Content-Disposition': `attachment; filename="${encodeURIComponent(fileShare.fileName)}"`,
         'Cache-Control': 'no-cache, no-store, must-revalidate',
         'Pragma': 'no-cache',
         'Expires': '0',
       });
 
-      return new NextResponse(fileShare.fileData as any, { headers, status: 200 });
+      return new NextResponse(fileShare.fileData, { headers, status: 200 });
     }
 
     // If not in memory and Supabase is configured, try Supabase
@@ -103,13 +103,13 @@ export async function GET(request: NextRequest) {
       // Return file
       const headers = new Headers({
         'Content-Type': 'application/octet-stream',
-        'Content-Disposition': `attachment; filename="${shareRecord.file_name}"`,
+        'Content-Disposition': `attachment; filename="${encodeURIComponent(shareRecord.file_name)}"`,
         'Cache-Control': 'no-cache, no-store, must-revalidate',
         'Pragma': 'no-cache',
         'Expires': '0',
       });
 
-      return new NextResponse(fileBuffer as any, { headers, status: 200 });
+      return new NextResponse(fileBuffer, { headers, status: 200 });
     }
 
     // File not found in either storage

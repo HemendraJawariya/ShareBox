@@ -215,11 +215,16 @@ export async function getShareRecord(
       .from('shares')
       .select('*')
       .eq('access_token', accessToken)
-      .single();
+      .maybeSingle();
 
     if (error) {
       console.error('Database query error:', error);
       return { error: error.message };
+    }
+
+    // If no data found, return null without error
+    if (!data) {
+      return { data: null };
     }
 
     return { data };
