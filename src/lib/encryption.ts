@@ -209,16 +209,47 @@ export function generateTelegramShareUrl(
 // Database Simulation (use real DB in production)
 export const inMemoryDatabase: Map<string, FileShareData> = new Map();
 
+// Temporary file store for Vercel - stores metadata and encrypted data for limited time
+const temporaryFileStore: Map<string, { data: FileShareData; timestamp: number }> = new Map();
+const TEMP_STORE_TTL = 24 * 60 * 60 * 1000; // 24 hours
+
 export function saveFileShare(fileShare: FileShareData): void {
   inMemoryDatabase.set(fileShare.fileId, fileShare);
+  // Also save to temporary store for Vercel  
+  temporaryFileStore.set(fileShare.fileId, { data: fileShare, timestamp: Date.now() });
 }
 
 export function getFileShare(fileId: string): FileShareData | null {
-  return inMemoryDatabase.get(fileId) || null;
+  // Check memory first
+  const memFile = inMemoryDatabase.get(fileId);
+  if (memFile) return memFile;
+  
+  // Check temporary store
+  const tempFile = temporaryFileStore.get(fileId);
+  if (tempFile && (Date.now() - tempFile.timestamp) < TEMP_STORE_TTL) {
+    return tempFile.data;
+  }
+  
+  // Clean up expired entries
+  if (tempFile) {
+    temporaryFileStore.delete(fileId);
+  }
+  
+  return null;
 }
 
 export function getAllFileShares(): FileShareData[] {
-  return Array.from(inMemoryDatabase.values());
+  // Merge both stores, prioritizing memory
+  const allFiles = Array.from(inMemoryDatabase.values());
+  
+  // Add temporary store files not in memory
+  for (const [fileId, { data }] of temporaryFileStore.entries()) {
+    if (!inMemoryDatabase.has(fileId) && (Date.now() - data.uploadedAt.getTime()) < TEMP_STORE_TTL) {
+      allFiles.push(data);
+    }
+  }
+  
+  return allFiles;
 }
 
 export function deleteFileShare(fileId: string): boolean {

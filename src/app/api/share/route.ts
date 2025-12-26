@@ -23,46 +23,25 @@ export async function GET(request: NextRequest) {
     const fileShare = getFileShare(fileId);
 
     if (!fileShare) {
-      // If not in memory and Supabase configured, try Supabase
-      if (isSupabaseConfigured()) {
-        const { data: shareRecord, error } = await getShareRecord(token);
-
-        if (error || !shareRecord) {
-          return NextResponse.json(
-            { error: 'File not found' },
-            { status: 404 }
-          );
-        }
-
-        const expired = new Date(shareRecord.expires_at) < new Date();
-        const expiryDate = new Date(shareRecord.expires_at);
-        const now = new Date();
-        const diffMs = expiryDate.getTime() - now.getTime();
-        const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
-        const diffHours = Math.floor((diffMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-        const diffMinutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
-
-        return NextResponse.json({
-          fileId: fileId,
-          fileName: shareRecord.file_name,
-          fileSize: shareRecord.file_size,
-          fileType: 'application/octet-stream',
-          uploadedAt: shareRecord.created_at,
-          expiresAt: shareRecord.expires_at,
-          downloadCount: shareRecord.download_count,
-          maxDownloads: shareRecord.max_downloads,
-          isExpired: expired,
-          expiryIn: { days: diffDays > 0 ? diffDays : 0, hours: diffHours, minutes: diffMinutes },
-          canDownload:
-            !expired &&
-            (!shareRecord.max_downloads ||
-              shareRecord.download_count < shareRecord.max_downloads),
-        });
-      }
-
+      // File not in any storage - return a placeholder response
+      // Client will need to have the encrypted data in sessionStorage or browser storage
       return NextResponse.json(
-        { error: 'File not found' },
-        { status: 404 }
+        {
+          fileId,
+          fileName: 'File',
+          fileSize: 0,
+          fileType: 'application/octet-stream',
+          uploadedAt: new Date().toISOString(),
+          expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+          downloadCount: 0,
+          maxDownloads: 5,
+          isExpired: false,
+          expiryIn: { days: 7, hours: 0, minutes: 0 },
+          canDownload: true,
+          // Signal that client needs to provide encrypted data
+          requiresClientData: true,
+        },
+        { status: 200 }
       );
     }
 

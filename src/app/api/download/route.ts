@@ -24,9 +24,9 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Try to get encrypted data from client (passed via query param for Vercel)
+    // Try to get encrypted data from client request first (Vercel serverless approach)
     if (encryptedDataParam && fileName) {
-      // Check expiry
+      // Check expiry if provided
       if (expiresParam && new Date(expiresParam) < new Date()) {
         return NextResponse.json(
           { error: 'File has expired' },
