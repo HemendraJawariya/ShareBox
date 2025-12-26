@@ -17,7 +17,6 @@ interface ShareInfo {
   maxDownloads?: number;
   isExpired: boolean;
   canDownload: boolean;
-  requiresClientData?: boolean;
   expiryIn: {
     days: number;
     hours: number;
@@ -81,7 +80,7 @@ export default function SharePage() {
 
     setDownloading(true);
     try {
-      // Check sessionStorage for encrypted data (for Vercel deployment)
+      // Check sessionStorage for encrypted data (for client-side encrypted downloads)
       const storedFile = sessionStorage.getItem(`file_${fileId}`);
       let downloadUrl = `/api/download?fileId=${fileId}&token=${token}`;
       
@@ -94,14 +93,9 @@ export default function SharePage() {
           downloadUrl += `&size=${shareInfo.fileSize}`;
           downloadUrl += `&expires=${encodeURIComponent(new Date(shareInfo.expiresAt).toISOString())}`;
         } catch (e) {
-          console.log('Could not parse stored file data');
-          // Continue without data - server will try to find it
+          console.log('Could not parse stored file data, trying server-side retrieval');
+          // Continue without data - server will try to find it in Supabase
         }
-      } else if (shareInfo.requiresClientData) {
-        // File requires encrypted data from client storage
-        setError('File data not found in browser. This can happen if: 1) You\'re on a different device/browser, 2) Browser storage was cleared, 3) Session expired. Try uploading again from the original device.');
-        setDownloading(false);
-        return;
       }
 
       const response = await fetch(downloadUrl);

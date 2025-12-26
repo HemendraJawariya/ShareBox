@@ -22,55 +22,88 @@ export async function GET(request: NextRequest) {
 
     const fileShare = getFileShare(fileId);
 
-    if (!fileShare) {
-      // File not in any storage - return a placeholder response
-      // Client will need to have the encrypted data in sessionStorage or browser storage
-      return NextResponse.json(
-        {
-          fileId,
-          fileName: 'File',
-          fileSize: 0,
-          fileType: 'application/octet-stream',
-          uploadedAt: new Date().toISOString(),
-          expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
-          downloadCount: 0,
-          maxDownloads: 5,
-          isExpired: false,
-          expiryIn: { days: 7, hours: 0, minutes: 0 },
-          canDownload: true,
-          // Signal that client needs to provide encrypted data
-          requiresClientData: true,
+    if (fileShare) {
+      // File found in local memory
+      if (fileShare.accessToken !== token) {
+        return NextResponse.json(
+          { error: 'Invalid access token' },
+          { status: 403 }
+        );
+      }
+
+      const expired = isExpired(fileShare.expiresAt);
+      const expiryInfo = getExpiryIn(fileShare.expiresAt);
+
+      return NextResponse.json({
+        fileId: fileShare.fileId,
+        fileName: fileShare.fileName,
+        fileSize: fileShare.fileSize,
+        fileType: fileShare.fileType,
+        uploadedAt: fileShare.uploadedAt,
+        expiresAt: fileShare.expiresAt,
+        downloadCount: fileShare.downloadCount,
+        maxDownloads: fileShare.maxDownloads,
+        isExpired: expired,
+        expiryIn: expiryInfo,
+        canDownload:
+          !expired &&
+          (!fileShare.maxDownloads ||
+            fileShare.downloadCount < fileShare.maxDownloads),
+      });
+    }
+
+    // If not in memory and Supabase is configured, try Supabase
+    if (isSupabaseConfigured()) {
+      const { data: shareRecord, error: recordError } = await getShareRecord(token);
+
+      if (recordError || !shareRecord) {
+        return NextResponse.json(
+          { error: 'This file share may have expired, been deleted, or the link is invalid.' },
+          { status: 404 }
+        );
+      }
+
+      // Check expiry
+      if (new Date(shareRecord.expires_at) < new Date()) {
+        return NextResponse.json(
+          { error: 'This file share may have expired, been deleted, or the link is invalid.' },
+          { status: 410 }
+        );
+      }
+
+      // Calculate expiry info
+      const now = new Date();
+      const expiresAt = new Date(shareRecord.expires_at);
+      const diffMs = expiresAt.getTime() - now.getTime();
+      const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+      const diffHours = Math.floor((diffMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+      const diffMinutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+
+      return NextResponse.json({
+        fileId,
+        fileName: shareRecord.file_name,
+        fileSize: shareRecord.file_size,
+        fileType: shareRecord.file_type || 'application/octet-stream',
+        uploadedAt: shareRecord.created_at,
+        expiresAt: shareRecord.expires_at,
+        downloadCount: shareRecord.download_count || 0,
+        maxDownloads: shareRecord.max_downloads,
+        isExpired: false,
+        expiryIn: { 
+          days: diffDays, 
+          hours: diffHours, 
+          minutes: diffMinutes 
         },
-        { status: 200 }
-      );
+        canDownload:
+          shareRecord.download_count < shareRecord.max_downloads,
+      });
     }
 
-    if (fileShare.accessToken !== token) {
-      return NextResponse.json(
-        { error: 'Invalid access token' },
-        { status: 403 }
-      );
-    }
-
-    const expired = isExpired(fileShare.expiresAt);
-    const expiryInfo = getExpiryIn(fileShare.expiresAt);
-
-    return NextResponse.json({
-      fileId: fileShare.fileId,
-      fileName: fileShare.fileName,
-      fileSize: fileShare.fileSize,
-      fileType: fileShare.fileType,
-      uploadedAt: fileShare.uploadedAt,
-      expiresAt: fileShare.expiresAt,
-      downloadCount: fileShare.downloadCount,
-      maxDownloads: fileShare.maxDownloads,
-      isExpired: expired,
-      expiryIn: expiryInfo,
-      canDownload:
-        !expired &&
-        (!fileShare.maxDownloads ||
-          fileShare.downloadCount < fileShare.maxDownloads),
-    });
+    // File not found in any storage
+    return NextResponse.json(
+      { error: 'This file share may have expired, been deleted, or the link is invalid.' },
+      { status: 404 }
+    );
   } catch (error) {
     console.error('Share info error:', error);
     return NextResponse.json(
