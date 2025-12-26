@@ -12,6 +12,10 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const fileId = searchParams.get('fileId') as string;
     const token = searchParams.get('token') as string;
+    const encryptedDataParam = searchParams.get('data') as string;
+    const fileName = searchParams.get('name') as string;
+    const fileSize = searchParams.get('size') as string;
+    const expiresParam = searchParams.get('expires') as string;
 
     if (!fileId || !token) {
       return NextResponse.json(
@@ -20,7 +24,29 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Try to get from in-memory storage first (works offline)
+    // Try to get from URL parameters first (Vercel serverless approach)
+    if (encryptedDataParam && fileName) {
+      // Check expiry
+      if (expiresParam && new Date(expiresParam) < new Date()) {
+        return NextResponse.json(
+          { error: 'File has expired' },
+          { status: 410 }
+        );
+      }
+
+      // Decode encrypted data from URL
+      const encryptedData = Buffer.from(encryptedDataParam, 'base64').toString('utf-8');
+      
+      const headers = new Headers({
+        'Content-Type': 'application/octet-stream',
+        'Content-Disposition': `attachment; filename="${encodeURIComponent(decodeURIComponent(fileName))}"`,
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+      });
+
+      return new NextResponse(encryptedData, { status: 200, headers });
+    }
+
+    // Fallback: Try to get from in-memory storage (local development)
     const fileShare = getFileShare(fileId);
 
     if (fileShare && fileShare.accessToken === token) {

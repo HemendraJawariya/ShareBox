@@ -3,6 +3,7 @@ import {
   encryptFileBuffer,
   saveFileShare,
   FileShareData,
+  generateShareUrl,
 } from '@/lib/encryption';
 import {
   uploadToSupabase,
@@ -99,13 +100,13 @@ export async function POST(request: NextRequest) {
       isDownloaded: false,
     };
 
-    // Save to in-memory database
+    // Save to in-memory database (for local use)
     saveFileShare(fileShareData);
 
-    // Note: Supabase uploads disabled on Vercel free tier
-    // Vercel doesn't allow outbound connections that cause socket timeouts
-    // Files are stored in-memory and accessible immediately via share links
-    // For production with cloud storage, use a paid Vercel plan or self-hosted solution
+    // For Vercel serverless: encode encrypted data in URL so it persists across requests
+    // This allows the file to be accessed from any server instance
+    const encryptedDataEncoded = Buffer.from(encryptedData).toString('base64');
+    const shareUrlWithData = generateShareUrl(fileId, accessToken) + `&data=${encryptedDataEncoded}&size=${file.size}&name=${encodeURIComponent(file.name)}&expires=${expiryDate.toISOString()}`;
 
     return NextResponse.json(
       {
@@ -114,7 +115,8 @@ export async function POST(request: NextRequest) {
         accessToken,
         fileName: file.name,
         expiresAt: fileShareData.expiresAt,
-        storage: 'memory',
+        shareUrl: shareUrlWithData,
+        storage: 'url-encoded',
       },
       { status: 200, headers }
     );
