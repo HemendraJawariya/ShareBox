@@ -8,9 +8,14 @@ export async function GET(request: NextRequest) {
     const fileId = searchParams.get('fileId');
     const token = searchParams.get('token');
 
+    // If no parameters provided, return helpful error
     if (!fileId || !token) {
       return NextResponse.json(
-        { error: 'Missing fileId or token' },
+        { 
+          error: 'Missing required parameters',
+          message: 'Please provide fileId and token as query parameters',
+          example: '/api/share?fileId=your-file-id&token=your-access-token'
+        },
         { status: 400 }
       );
     }
@@ -94,4 +99,15 @@ export async function GET(request: NextRequest) {
       { status: 500 }
     );
   }
+}
+
+export async function OPTIONS(request: NextRequest) {
+  return NextResponse.json(
+    { 
+      message: 'Share API endpoint',
+      usage: 'GET /api/share?fileId=file-id&token=access-token',
+      description: 'Retrieve file share metadata and download permissions'
+    },
+    { status: 200 }
+  );
 }
