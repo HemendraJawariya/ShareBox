@@ -54,52 +54,61 @@ export async function GET(request: NextRequest) {
 
     // If not in memory and Supabase is configured, try Supabase
     if (isSupabaseConfigured()) {
-      const { data: shareRecord, error: recordError } = await getShareRecord(token);
+      try {
+        const { data: shareRecord, error: recordError } = await getShareRecord(token);
 
-      if (recordError || !shareRecord) {
+        if (recordError || !shareRecord) {
+          return NextResponse.json(
+            { error: 'This file share may have expired, been deleted, or the link is invalid.' },
+            { status: 404 }
+          );
+        }
+
+        // Check expiry
+        if (new Date(shareRecord.expires_at) < new Date()) {
+          return NextResponse.json(
+            { error: 'This file share may have expired, been deleted, or the link is invalid.' },
+            { status: 410 }
+          );
+        }
+
+        // Calculate expiry info
+        const now = new Date();
+        const expiresAt = new Date(shareRecord.expires_at);
+        const diffMs = expiresAt.getTime() - now.getTime();
+        const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+        const diffHours = Math.floor((diffMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+        const diffMinutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+
+        return NextResponse.json({
+          fileId,
+          fileName: shareRecord.file_name,
+          fileSize: shareRecord.file_size,
+          fileType: shareRecord.file_type || 'application/octet-stream',
+          uploadedAt: shareRecord.created_at,
+          expiresAt: shareRecord.expires_at,
+          downloadCount: shareRecord.download_count || 0,
+          maxDownloads: shareRecord.max_downloads,
+          isExpired: false,
+          expiryIn: { 
+            days: diffDays, 
+            hours: diffHours, 
+            minutes: diffMinutes 
+          },
+          canDownload:
+            shareRecord.download_count < shareRecord.max_downloads,
+        });
+      } catch (supabaseError) {
+        console.error('Supabase query error:', supabaseError);
         return NextResponse.json(
-          { error: 'This file share may have expired, been deleted, or the link is invalid.' },
-          { status: 404 }
+          { error: 'Failed to query share information' },
+          { status: 500 }
         );
       }
-
-      // Check expiry
-      if (new Date(shareRecord.expires_at) < new Date()) {
-        return NextResponse.json(
-          { error: 'This file share may have expired, been deleted, or the link is invalid.' },
-          { status: 410 }
-        );
-      }
-
-      // Calculate expiry info
-      const now = new Date();
-      const expiresAt = new Date(shareRecord.expires_at);
-      const diffMs = expiresAt.getTime() - now.getTime();
-      const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-      const diffHours = Math.floor((diffMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-      const diffMinutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
-
-      return NextResponse.json({
-        fileId,
-        fileName: shareRecord.file_name,
-        fileSize: shareRecord.file_size,
-        fileType: shareRecord.file_type || 'application/octet-stream',
-        uploadedAt: shareRecord.created_at,
-        expiresAt: shareRecord.expires_at,
-        downloadCount: shareRecord.download_count || 0,
-        maxDownloads: shareRecord.max_downloads,
-        isExpired: false,
-        expiryIn: { 
-          days: diffDays, 
-          hours: diffHours, 
-          minutes: diffMinutes 
-        },
-        canDownload:
-          shareRecord.download_count < shareRecord.max_downloads,
-      });
     }
 
     // File not found in any storage
+    console.warn('Share not found - file not in memory and Supabase not configured. Token:', token?.substring(0, 8) + '...');
     return NextResponse.json(
       { error: 'This file share may have expired, been deleted, or the link is invalid.' },
       { status: 404 }
