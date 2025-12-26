@@ -2,12 +2,18 @@
 
 import { useFileStore } from '@/lib/store';
 import SharedFileCard from './SharedFileCard';
+import { useEffect, useState } from 'react';
 
 export default function SharedFilesList() {
   const files = useFileStore((state) => state.files);
   const removeFile = useFileStore((state) => state.removeFile);
+  const [mounted, setMounted] = useState(false);
 
-  if (files.length === 0) {
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  if (!mounted || files.length === 0) {
     return null;
   }
 
