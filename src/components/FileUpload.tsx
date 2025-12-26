@@ -5,7 +5,6 @@ import { Upload, X, Calendar, AlertCircle, CheckCircle } from 'lucide-react';
 import { useFileStore } from '@/lib/store';
 import { formatFileSize } from '@/lib/utils';
 import { generateFileId, generateAccessToken, calculateExpiryDate, generateShareUrl } from '@/lib/encryption';
-import { uploadFileInChunks } from '@/lib/chunked-upload';
 
 interface UploadProgress {
   fileIndex: number;
@@ -16,9 +15,6 @@ interface UploadProgress {
   error?: string;
 }
 
-// Use chunked upload for files larger than 50MB (more aggressive for stability)
-const CHUNKED_UPLOAD_THRESHOLD = 50 * 1024 * 1024;
-
 export default function FileUpload() {
   const [isDragging, setIsDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -28,11 +24,6 @@ export default function FileUpload() {
   const [uploadProgress, setUploadProgress] = useState<UploadProgress[]>([]);
   const [uploadError, setUploadError] = useState<string>('');
   const addFile = useFileStore((state) => state.addFile);
-
-  // Debug: Log file size threshold
-  const getUploadMethod = (fileSize: number) => {
-    return fileSize > CHUNKED_UPLOAD_THRESHOLD ? 'chunked' : 'regular';
-  };
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -69,77 +60,6 @@ export default function FileUpload() {
       const expiresAt = calculateExpiryDate(expiryDays);
       const shareUrl = generateShareUrl(fileId, accessToken);
 
-      // Determine upload method based on file size
-      const uploadMethod = getUploadMethod(file.size);
-      const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
-      console.log(`[FileUpload] ${file.name}: ${fileSizeMB}MB - using ${uploadMethod} upload`);
-
-      // Use chunked upload for large files
-      if (file.size > CHUNKED_UPLOAD_THRESHOLD) {
-        const totalChunks = Math.ceil(file.size / (5 * 1024 * 1024));
-        console.log(`[FileUpload] Starting chunked upload: ${totalChunks} chunks of 5MB each`);
-        
-        const result = await uploadFileInChunks(
-          file,
-          {
-            fileId,
-            fileName: file.name,
-            fileSize: file.size,
-            totalChunks: Math.ceil(file.size / (5 * 1024 * 1024)),
-            accessToken,
-            expiryDays,
-            maxDownloads,
-          },
-          (progress) => {
-            setUploadProgress((prev) =>
-              prev.map((p) =>
-                p.fileIndex === index
-                  ? {
-                      ...p,
-                      uploadedBytes: progress.uploadedBytes,
-                    }
-                  : p
-              )
-            );
-          }
-        );
-
-        if (result.ok) {
-          setUploadProgress((prev) =>
-            prev.map((p) =>
-              p.fileIndex === index
-                ? { ...p, status: 'completed', uploadedBytes: file.size }
-                : p
-            )
-          );
-
-          addFile({
-            id: fileId,
-            name: file.name,
-            size: file.size,
-            type: file.type,
-            uploadedAt: new Date(),
-            shareUrl,
-            expiresAt,
-            accessToken,
-            maxDownloads,
-          });
-          return true;
-        } else {
-          const errorMsg = result.error || 'Upload failed';
-          setUploadProgress((prev) =>
-            prev.map((p) =>
-              p.fileIndex === index
-                ? { ...p, status: 'error', error: errorMsg }
-                : p
-            )
-          );
-          setUploadError(`${file.name}: ${errorMsg}`);
-          return false;
-        }
-      }
-
-      // Regular upload for smaller files
       const formData = new FormData();
       formData.append('file', file);
       formData.append('fileId', fileId);
@@ -149,7 +69,7 @@ export default function FileUpload() {
 
       const xhr = new XMLHttpRequest();
 
-      // Track upload progress with optimized updates
+      // Track upload progress
       xhr.upload.addEventListener('progress', (event) => {
         if (event.lengthComputable) {
           setUploadProgress((prev) =>
@@ -173,14 +93,6 @@ export default function FileUpload() {
           } else {
             let errorMsg = `Upload failed with status ${xhr.status}`;
             
-            // Provide specific error messages for common issues
-            if (xhr.status === 413) {
-              errorMsg = 'File too large for single upload. Try uploading a smaller file or check your connection.';
-              console.error(`[FileUpload] 413 Error: ${file.name} (${fileSizeMB}MB) - Consider using chunked upload`);
-            } else if (xhr.status === 408) {
-              errorMsg = 'Upload timeout. Connection lost during transfer.';
-            }
-            
             try {
               const errorData = JSON.parse(xhr.responseText);
               errorMsg = errorData.error || errorMsg;
@@ -193,17 +105,15 @@ export default function FileUpload() {
         };
 
         xhr.onerror = () => {
-          console.error(`[FileUpload] Network error: ${file.name}`);
           resolve({ ok: false, error: 'Network error occurred during upload' });
         };
 
         xhr.ontimeout = () => {
-          console.error(`[FileUpload] Timeout: ${file.name}`);
-          resolve({ ok: false, error: 'Upload timeout - file too large or slow connection' });
+          resolve({ ok: false, error: 'Upload timeout - connection lost' });
         };
 
         xhr.open('POST', '/api/upload');
-        xhr.timeout = 3600000; // 1 hour timeout
+        xhr.timeout = 300000; // 5 minute timeout for Vercel
         xhr.send(formData);
       });
 
