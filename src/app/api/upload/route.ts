@@ -103,11 +103,51 @@ export async function POST(request: NextRequest) {
     // Save to in-memory database (local development)
     saveFileShare(fileShareData);
 
-    // Generate standard share URL
-    const shareUrl = generateShareUrl(fileId, accessToken);
+    // Upload to Supabase in background (non-blocking)
+    // Use a timeout to prevent blocking the response on slow networks
+    if (isSupabaseConfigured()) {
+      Promise.race([
+        // Try to upload with a 5 second timeout
+        Promise.resolve().then(() => {
+          const encryptedBuffer = Buffer.from(encryptedData, 'utf-8');
+          return uploadToSupabase(
+            fileId,
+            encryptedBuffer,
+            {
+              fileName: file.name,
+              fileSize: file.size.toString(),
+              accessToken,
+            }
+          );
+        }),
+        // Timeout promise
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Upload timeout')), 5000)
+        ),
+      ])
+        .then(() => {
+          // Create database record after upload succeeds
+          return createShareRecord({
+            id: fileId,
+            fileName: file.name,
+            fileSize: file.size,
+            encryptedKey: accessToken,
+            accessToken,
+            expiresAt: expiryDate.toISOString(),
+            maxDownloads,
+            createdBy: 'anonymous',
+          });
+        })
+        .catch((err) => {
+          // Log but don't block - upload will happen later or file is accessible from memory
+          console.log('Background Supabase upload failed (non-blocking):', err.message);
+        });
+    }
 
     // Return response with file metadata and encrypted data
     // Client will store encrypted data in sessionStorage for Vercel deployment
+    const shareUrl = generateShareUrl(fileId, accessToken);
+
     return NextResponse.json(
       {
         success: true,

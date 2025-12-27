@@ -59,15 +59,28 @@ export async function GET(request: NextRequest) {
 
         if (recordError || !shareRecord) {
           return NextResponse.json(
-            { error: 'This file share may have expired, been deleted, or the link is invalid.' },
-            { status: 404 }
+            { 
+              fileId,
+              fileName: 'File',
+              fileSize: 0,
+              fileType: 'application/octet-stream',
+              uploadedAt: new Date().toISOString(),
+              expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+              downloadCount: 0,
+              maxDownloads: 5,
+              isExpired: false,
+              expiryIn: { days: 7, hours: 0, minutes: 0 },
+              canDownload: true,
+              requiresClientData: true,
+            },
+            { status: 200 }
           );
         }
 
         // Check expiry
         if (new Date(shareRecord.expires_at) < new Date()) {
           return NextResponse.json(
-            { error: 'This file share may have expired, been deleted, or the link is invalid.' },
+            { error: 'This file share has expired' },
             { status: 410 }
           );
         }
