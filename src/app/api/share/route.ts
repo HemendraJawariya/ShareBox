@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getFileShare, isExpired, getExpiryIn } from '@/lib/encryption';
-import { getShareRecord, isSupabaseConfigured } from '@/lib/supabase';
+import { retrieveFile } from '@/lib/persistent-store';
 
 export async function GET(request: NextRequest) {
   try {
@@ -20,6 +20,39 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    // Try persistent store first
+    const persistedFile = retrieveFile(fileId);
+    
+    if (persistedFile && persistedFile.accessToken === token) {
+      const isFileExpired = new Date() > persistedFile.expiresAt;
+      const now = new Date();
+      const diffMs = persistedFile.expiresAt.getTime() - now.getTime();
+      const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+      const diffHours = Math.floor((diffMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+      const diffMinutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+
+      return NextResponse.json({
+        fileId: persistedFile.fileId,
+        fileName: persistedFile.fileName,
+        fileSize: persistedFile.fileSize,
+        fileType: persistedFile.fileType,
+        uploadedAt: persistedFile.uploadedAt.toISOString(),
+        expiresAt: persistedFile.expiresAt.toISOString(),
+        downloadCount: persistedFile.downloadCount,
+        maxDownloads: persistedFile.maxDownloads,
+        isExpired: isFileExpired,
+        expiryIn: { 
+          days: diffDays > 0 ? diffDays : 0, 
+          hours: diffHours, 
+          minutes: diffMinutes 
+        },
+        canDownload:
+          !isFileExpired &&
+          persistedFile.downloadCount < persistedFile.maxDownloads,
+      });
+    }
+
+    // Try in-memory store as fallback
     const fileShare = getFileShare(fileId);
 
     if (fileShare) {
@@ -52,78 +85,11 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    // If not in memory and Supabase is configured, try Supabase
-    if (isSupabaseConfigured()) {
-      try {
-        const { data: shareRecord, error: recordError } = await getShareRecord(token);
-
-        if (recordError || !shareRecord) {
-          return NextResponse.json(
-            { 
-              fileId,
-              fileName: 'File',
-              fileSize: 0,
-              fileType: 'application/octet-stream',
-              uploadedAt: new Date().toISOString(),
-              expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
-              downloadCount: 0,
-              maxDownloads: 5,
-              isExpired: false,
-              expiryIn: { days: 7, hours: 0, minutes: 0 },
-              canDownload: true,
-              requiresClientData: true,
-            },
-            { status: 200 }
-          );
-        }
-
-        // Check expiry
-        if (new Date(shareRecord.expires_at) < new Date()) {
-          return NextResponse.json(
-            { error: 'This file share has expired' },
-            { status: 410 }
-          );
-        }
-
-        // Calculate expiry info
-        const now = new Date();
-        const expiresAt = new Date(shareRecord.expires_at);
-        const diffMs = expiresAt.getTime() - now.getTime();
-        const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-        const diffHours = Math.floor((diffMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-        const diffMinutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
-
-        return NextResponse.json({
-          fileId,
-          fileName: shareRecord.file_name,
-          fileSize: shareRecord.file_size,
-          fileType: shareRecord.file_type || 'application/octet-stream',
-          uploadedAt: shareRecord.created_at,
-          expiresAt: shareRecord.expires_at,
-          downloadCount: shareRecord.download_count || 0,
-          maxDownloads: shareRecord.max_downloads,
-          isExpired: false,
-          expiryIn: { 
-            days: diffDays, 
-            hours: diffHours, 
-            minutes: diffMinutes 
-          },
-          canDownload:
-            shareRecord.download_count < shareRecord.max_downloads,
-        });
-      } catch (supabaseError) {
-        console.error('Supabase query error:', supabaseError);
-        return NextResponse.json(
-          { error: 'Failed to query share information' },
-          { status: 500 }
-        );
-      }
-    }
-
-    // File not found in any storage
-    console.warn('Share not found - file not in memory and Supabase not configured. Token:', token?.substring(0, 8) + '...');
+    // File not found
     return NextResponse.json(
-      { error: 'This file share may have expired, been deleted, or the link is invalid.' },
+      { 
+        error: 'File not found - it may have expired or the link is invalid'
+      },
       { status: 404 }
     );
   } catch (error) {

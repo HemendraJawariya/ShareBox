@@ -1,73 +1,84 @@
 import { NextRequest, NextResponse } from 'next/server';
-import {
-  downloadFromSupabase,
-  getShareRecord,
-  incrementDownloadCount,
-  isSupabaseConfigured,
-} from '@/lib/supabase';
 import { getFileShare } from '@/lib/encryption';
+import { retrieveFile, incrementDownloadCount, canDownload } from '@/lib/persistent-store';
 
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
-    const fileId = searchParams.get('fileId') as string;
-    const token = searchParams.get('token') as string;
-    const encryptedDataParam = searchParams.get('encryptedData') as string;
-    const fileName = searchParams.get('name') as string;
-    const fileSize = searchParams.get('size') as string;
-    const expiresParam = searchParams.get('expires') as string;
+    const fileId = searchParams.get('fileId');
+    const token = searchParams.get('token');
+    const encryptedDataParam = searchParams.get('encryptedData');
+    const fileName = searchParams.get('fileName');
+
+    // If encryptedData is provided (from sessionStorage), use it directly
+    if (encryptedDataParam && fileName) {
+      try {
+        const decryptedData = Buffer.from(decodeURIComponent(encryptedDataParam), 'base64');
+
+        const headers = new Headers({
+          'Content-Type': 'application/octet-stream',
+          'Content-Disposition': `attachment; filename="${encodeURIComponent(fileName)}"`,
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'Pragma': 'no-cache',
+          'Expires': '0',
+        });
+
+        return new NextResponse(decryptedData, { headers, status: 200 });
+      } catch (error) {
+        console.error('Failed to decrypt data from client:', error);
+        // Fall through to server-side lookup
+      }
+    }
 
     if (!fileId || !token) {
       return NextResponse.json(
-        { error: 'Missing fileId or token' },
+        { error: 'Missing required parameters' },
         { status: 400 }
       );
     }
 
-    // Try to get encrypted data from client request first (Vercel serverless approach)
-    if (encryptedDataParam && fileName) {
-      // Check expiry if provided
-      if (expiresParam && new Date(expiresParam) < new Date()) {
-        return NextResponse.json(
-          { error: 'File has expired' },
-          { status: 410 }
-        );
+    // Try persistent store first
+    if (await canDownload(fileId)) {
+      const persistedFile = retrieveFile(fileId);
+
+      if (persistedFile && persistedFile.accessToken === token) {
+        await incrementDownloadCount(fileId);
+
+        // Parse encrypted data if it's a string (JSON array format for large files)
+        let fileData: Buffer;
+        if (typeof persistedFile.encryptedData === 'string') {
+          try {
+            const chunks = JSON.parse(persistedFile.encryptedData);
+            fileData = Buffer.concat(chunks.map((chunk: string) => Buffer.from(chunk, 'base64')));
+          } catch {
+            fileData = Buffer.from(persistedFile.encryptedData, 'base64');
+          }
+        } else {
+          fileData = persistedFile.encryptedData as any as Buffer;
+        }
+
+        const headers = new Headers({
+          'Content-Type': 'application/octet-stream',
+          'Content-Disposition': `attachment; filename="${encodeURIComponent(persistedFile.fileName)}"`,
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'Pragma': 'no-cache',
+          'Expires': '0',
+        });
+
+        return new NextResponse(new Uint8Array(fileData), { headers, status: 200 });
       }
-
-      const encryptedData = encryptedDataParam;
-      
-      const headers = new Headers({
-        'Content-Type': 'application/octet-stream',
-        'Content-Disposition': `attachment; filename="${encodeURIComponent(decodeURIComponent(fileName))}"`,
-        'Cache-Control': 'no-cache, no-store, must-revalidate',
-      });
-
-      return new NextResponse(encryptedData, { status: 200, headers });
     }
 
-    // Fallback: Try to get from in-memory storage (local development)
+    // Try in-memory store as fallback
     const fileShare = getFileShare(fileId);
 
-    if (fileShare && fileShare.accessToken === token) {
-      // Check expiry
-      if (new Date(fileShare.expiresAt) < new Date()) {
+    if (fileShare) {
+      if (fileShare.accessToken !== token) {
         return NextResponse.json(
-          { error: 'File has expired' },
-          { status: 410 }
+          { error: 'Invalid access token' },
+          { status: 403 }
         );
       }
-
-      // Check download limit
-      if (fileShare.maxDownloads && fileShare.downloadCount >= fileShare.maxDownloads) {
-        return NextResponse.json(
-          { error: 'Download limit exceeded' },
-          { status: 429 }
-        );
-      }
-
-      // Increment counter
-      fileShare.downloadCount += 1;
-      fileShare.isDownloaded = true;
 
       const headers = new Headers({
         'Content-Type': 'application/octet-stream',
@@ -80,64 +91,7 @@ export async function GET(request: NextRequest) {
       return new NextResponse(fileShare.fileData as any, { headers, status: 200 });
     }
 
-    // If not in memory and Supabase is configured, try Supabase
-    if (isSupabaseConfigured()) {
-      const { data: shareRecord, error: recordError } = await getShareRecord(token);
-
-      if (recordError || !shareRecord) {
-        return NextResponse.json(
-          { error: 'File not found or invalid token' },
-          { status: 404 }
-        );
-      }
-
-      // Check expiry
-      if (new Date(shareRecord.expires_at) < new Date()) {
-        return NextResponse.json(
-          { error: 'File has expired' },
-          { status: 410 }
-        );
-      }
-
-      // Check download limit
-      if (
-        shareRecord.download_count >=
-        shareRecord.max_downloads
-      ) {
-        return NextResponse.json(
-          { error: 'Download limit exceeded' },
-          { status: 429 }
-        );
-      }
-
-      // Download file from Supabase
-      const { data: fileBuffer, error: downloadError } = await downloadFromSupabase(
-        fileId
-      );
-
-      if (downloadError || !fileBuffer) {
-        return NextResponse.json(
-          { error: 'Failed to download file' },
-          { status: 500 }
-        );
-      }
-
-      // Increment download count
-      await incrementDownloadCount(token);
-
-      // Return file
-      const headers = new Headers({
-        'Content-Type': 'application/octet-stream',
-        'Content-Disposition': `attachment; filename="${encodeURIComponent(shareRecord.file_name)}"`,
-        'Cache-Control': 'no-cache, no-store, must-revalidate',
-        'Pragma': 'no-cache',
-        'Expires': '0',
-      });
-
-      return new NextResponse(fileBuffer as any, { headers, status: 200 });
-    }
-
-    // File not found in either storage
+    // File not found
     return NextResponse.json(
       { error: 'File not found or invalid token' },
       { status: 404 }
