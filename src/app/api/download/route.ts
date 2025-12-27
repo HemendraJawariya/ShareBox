@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getFileShare } from '@/lib/encryption';
 import { retrieveFile, incrementDownloadCount, canDownload } from '@/lib/persistent-store';
+import { getCachedFile } from '@/lib/temp-cache';
 
 export async function GET(request: NextRequest) {
   try {
@@ -68,6 +69,35 @@ export async function GET(request: NextRequest) {
 
         return new NextResponse(new Uint8Array(fileData), { headers, status: 200 });
       }
+    }
+
+    // Try temporary cache (for cross-instance access on Vercel)
+    const cachedFile = getCachedFile(fileId);
+    if (cachedFile) {
+      console.log(`[Download] Found file in temporary cache: ${fileId}`);
+      
+      // Parse encrypted data if it's JSON array format for large files
+      let fileData: Buffer;
+      if (typeof cachedFile.encryptedData === 'string') {
+        try {
+          const chunks = JSON.parse(cachedFile.encryptedData);
+          fileData = Buffer.concat(chunks.map((chunk: string) => Buffer.from(chunk, 'base64')));
+        } catch {
+          fileData = Buffer.from(cachedFile.encryptedData, 'base64');
+        }
+      } else {
+        fileData = Buffer.from(cachedFile.encryptedData, 'base64');
+      }
+
+      const headers = new Headers({
+        'Content-Type': 'application/octet-stream',
+        'Content-Disposition': `attachment; filename="${encodeURIComponent(cachedFile.fileName)}"`,
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0',
+      });
+
+      return new NextResponse(new Uint8Array(fileData), { headers, status: 200 });
     }
 
     // Try in-memory store as fallback

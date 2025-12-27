@@ -6,6 +6,7 @@ import {
   generateShareUrl,
 } from '@/lib/encryption';
 import { storeFile } from '@/lib/persistent-store';
+import { cacheFile } from '@/lib/temp-cache';
 
 // Configure for large file uploads - 5 minutes max for Vercel hobby plan
 export const maxDuration = 300;
@@ -111,6 +112,16 @@ export async function POST(request: NextRequest) {
       maxDownloads,
       downloadCount: 0,
       uploadedAt: new Date(),
+    });
+
+    // Also cache in temporary cache (15 min TTL) for cross-request access
+    cacheFile(fileId, {
+      encryptedData: encryptedData,
+      fileName: file.name,
+      fileSize: file.size,
+      fileType: file.type,
+      expiresAt: expiryDate.getTime(),
+      createdAt: Date.now(),
     });
 
     console.log(`[Upload] File stored: ${file.name} (${fileId})`);

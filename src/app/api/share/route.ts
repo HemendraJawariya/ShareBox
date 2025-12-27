@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getFileShare, isExpired, getExpiryIn } from '@/lib/encryption';
 import { retrieveFile } from '@/lib/persistent-store';
+import { getCachedFile } from '@/lib/temp-cache';
 
 export async function GET(request: NextRequest) {
   try {
@@ -50,6 +51,36 @@ export async function GET(request: NextRequest) {
         canDownload:
           !isFileExpired &&
           persistedFile.downloadCount < persistedFile.maxDownloads,
+      });
+    }
+
+    // Try temporary cache (Vercel cross-instance fallback)
+    const cachedFile = getCachedFile(fileId);
+    if (cachedFile) {
+      console.log(`[Share] Found file in temporary cache: ${fileId}`);
+      const isFileExpired = Date.now() > cachedFile.expiresAt;
+      const now = Date.now();
+      const diffMs = cachedFile.expiresAt - now;
+      const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+      const diffHours = Math.floor((diffMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+      const diffMinutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+
+      return NextResponse.json({
+        fileId,
+        fileName: cachedFile.fileName,
+        fileSize: cachedFile.fileSize,
+        fileType: cachedFile.fileType,
+        uploadedAt: new Date(cachedFile.createdAt).toISOString(),
+        expiresAt: new Date(cachedFile.expiresAt).toISOString(),
+        downloadCount: 0,
+        maxDownloads: 5,
+        isExpired: isFileExpired,
+        expiryIn: { 
+          days: diffDays > 0 ? diffDays : 0, 
+          hours: diffHours, 
+          minutes: diffMinutes 
+        },
+        canDownload: !isFileExpired,
       });
     }
 
