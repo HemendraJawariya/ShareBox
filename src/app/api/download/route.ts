@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getFileShare } from '@/lib/encryption';
 import { retrieveFile, incrementDownloadCount, canDownload } from '@/lib/persistent-store';
 import { getCachedFile } from '@/lib/temp-cache';
+import { downloadFromSupabase, getShareRecord, incrementDownloadCount as incrementSupabaseDownloads, isSupabaseConfigured } from '@/lib/supabase';
 
 export async function GET(request: NextRequest) {
   try {
@@ -36,6 +37,55 @@ export async function GET(request: NextRequest) {
         { error: 'Missing required parameters' },
         { status: 400 }
       );
+    }
+
+    // Try Supabase first (primary source of truth)
+    if (isSupabaseConfigured()) {
+      console.log(`[Download] Checking Supabase for token: ${token}`);
+      
+      const shareRecordResult = await getShareRecord(token);
+      
+      if (shareRecordResult.data) {
+        const record = shareRecordResult.data;
+        
+        // Check expiry
+        if (new Date(record.expires_at) < new Date()) {
+          return NextResponse.json(
+            { error: 'File has expired' },
+            { status: 410 }
+          );
+        }
+
+        // Check download limit
+        if (record.download_count >= record.max_downloads) {
+          return NextResponse.json(
+            { error: 'Download limit exceeded' },
+            { status: 429 }
+          );
+        }
+
+        // Download file from Supabase Storage
+        console.log(`[Download] Downloading from Supabase: ${record.file_name}`);
+        const downloadResult = await downloadFromSupabase(record.encrypted_key || fileId);
+
+        if (downloadResult.error || !downloadResult.data) {
+          console.error(`[Download] Supabase download failed:`, downloadResult.error);
+          // Fall through to other sources
+        } else {
+          // Increment download counter in Supabase
+          await incrementSupabaseDownloads(token);
+
+          const headers = new Headers({
+            'Content-Type': 'application/octet-stream',
+            'Content-Disposition': `attachment; filename="${encodeURIComponent(record.file_name)}"`,
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Pragma': 'no-cache',
+            'Expires': '0',
+          });
+
+          return new NextResponse(new Uint8Array(downloadResult.data), { headers, status: 200 });
+        }
+      }
     }
 
     // Try persistent store first

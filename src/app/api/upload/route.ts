@@ -7,6 +7,7 @@ import {
 } from '@/lib/encryption';
 import { storeFile } from '@/lib/persistent-store';
 import { cacheFile } from '@/lib/temp-cache';
+import { uploadToSupabase, createShareRecord, isSupabaseConfigured } from '@/lib/supabase';
 
 // Configure for large file uploads - 5 minutes max for Vercel hobby plan
 export const maxDuration = 300;
@@ -125,6 +126,58 @@ export async function POST(request: NextRequest) {
     });
 
     console.log(`[Upload] File stored: ${file.name} (${fileId})`);
+
+    // Upload encrypted file to Supabase Storage
+    if (isSupabaseConfigured()) {
+      console.log(`[Upload] Uploading to Supabase Storage...`);
+      
+      // Convert encryptedData to buffer if it's a string
+      let fileBuffer: Buffer;
+      if (typeof encryptedData === 'string') {
+        try {
+          // If it's JSON array format (large files), store as is
+          if (encryptedData.startsWith('[')) {
+            fileBuffer = Buffer.from(encryptedData, 'utf8');
+          } else {
+            fileBuffer = Buffer.from(encryptedData, 'base64');
+          }
+        } catch {
+          fileBuffer = Buffer.from(encryptedData, 'utf8');
+        }
+      } else {
+        fileBuffer = encryptedData as any as Buffer;
+      }
+
+      const uploadResult = await uploadToSupabase(fileId, fileBuffer, {
+        originalName: file.name,
+        fileType: file.type,
+        fileSize: file.size.toString(),
+      });
+
+      if (uploadResult.error) {
+        console.error(`[Upload] Supabase upload failed:`, uploadResult.error);
+      } else {
+        console.log(`[Upload] File uploaded to Supabase: ${uploadResult.path}`);
+        
+        // Create share record in Supabase database
+        const shareRecordResult = await createShareRecord({
+          id: `${fileId}-${accessToken}`,
+          fileName: file.name,
+          fileSize: file.size,
+          encryptedKey: fileId,
+          accessToken,
+          expiresAt: expiryDate.toISOString(),
+          maxDownloads,
+          createdBy: 'anonymous',
+        });
+
+        if (shareRecordResult.error) {
+          console.error(`[Upload] Failed to create share record:`, shareRecordResult.error);
+        } else {
+          console.log(`[Upload] Share record created in Supabase`);
+        }
+      }
+    }
 
     // Return response with file metadata and encrypted data
     // Client will store encrypted data in sessionStorage for same-session access

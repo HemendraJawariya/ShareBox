@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getFileShare, isExpired, getExpiryIn } from '@/lib/encryption';
 import { retrieveFile } from '@/lib/persistent-store';
 import { getCachedFile } from '@/lib/temp-cache';
+import { getShareRecord, isSupabaseConfigured } from '@/lib/supabase';
 
 export async function GET(request: NextRequest) {
   try {
@@ -21,7 +22,48 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Try persistent store first
+    // Try Supabase database first (primary source of truth)
+    if (isSupabaseConfigured()) {
+      console.log(`[Share] Querying Supabase for fileId: ${fileId}`);
+      
+      const shareRecordResult = await getShareRecord(token);
+      
+      if (shareRecordResult.data) {
+        const record = shareRecordResult.data;
+        const expiresAt = new Date(record.expires_at);
+        const isFileExpired = new Date() > expiresAt;
+        
+        if (!isFileExpired) {
+          const now = new Date();
+          const diffMs = expiresAt.getTime() - now.getTime();
+          const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+          const diffHours = Math.floor((diffMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+          const diffMinutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+
+          console.log(`[Share] Found in Supabase: ${record.file_name}`);
+          return NextResponse.json({
+            fileId,
+            fileName: record.file_name,
+            fileSize: record.file_size,
+            fileType: record.file_type || 'application/octet-stream',
+            uploadedAt: record.created_at,
+            expiresAt: record.expires_at,
+            downloadCount: record.download_count || 0,
+            maxDownloads: record.max_downloads,
+            isExpired: false,
+            expiryIn: { days: diffDays, hours: diffHours, minutes: diffMinutes },
+            canDownload: record.download_count < record.max_downloads,
+          });
+        } else {
+          return NextResponse.json(
+            { error: 'This file share has expired' },
+            { status: 410 }
+          );
+        }
+      }
+    }
+
+    // Try persistent store next
     const persistedFile = retrieveFile(fileId);
     console.log(`[Share] Querying persistent store for fileId: ${fileId}`);
     
