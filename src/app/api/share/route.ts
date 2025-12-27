@@ -22,6 +22,7 @@ export async function GET(request: NextRequest) {
 
     // Try persistent store first
     const persistedFile = retrieveFile(fileId);
+    console.log(`[Share] Querying persistent store for fileId: ${fileId}`);
     
     if (persistedFile && persistedFile.accessToken === token) {
       const isFileExpired = new Date() > persistedFile.expiresAt;

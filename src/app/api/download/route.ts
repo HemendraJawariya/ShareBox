@@ -40,6 +40,7 @@ export async function GET(request: NextRequest) {
     // Try persistent store first
     if (await canDownload(fileId)) {
       const persistedFile = retrieveFile(fileId);
+      console.log(`[Download] Checking persistent store for fileId: ${fileId}`);
 
       if (persistedFile && persistedFile.accessToken === token) {
         await incrementDownloadCount(fileId);

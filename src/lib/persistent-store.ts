@@ -28,6 +28,8 @@ const fileStore = new Map<string, StoredFile>();
 export function storeFile(file: StoredFile): void {
   fileStore.set(file.fileId, file);
   console.log(`[FileStore] Stored file: ${file.fileId} (${file.fileName})`);
+  console.log(`[FileStore] Total files in store: ${fileStore.size}`);
+  console.log(`[FileStore] Store keys: ${Array.from(fileStore.keys()).join(', ')}`);
 }
 
 /**
@@ -37,7 +39,7 @@ export function retrieveFile(fileId: string): StoredFile | null {
   const file = fileStore.get(fileId);
   
   if (!file) {
-    console.log(`[FileStore] File not found: ${fileId}`);
+    console.log(`[FileStore] File not found: ${fileId}. Available files: ${Array.from(fileStore.keys()).join(', ') || 'none'}`);
     return null;
   }
 
