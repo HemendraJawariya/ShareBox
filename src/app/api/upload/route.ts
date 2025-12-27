@@ -1,12 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { v4 as uuidv4 } from 'uuid';
 import {
   encryptFileBuffer,
-  saveFileShare,
-  FileShareData,
   generateShareUrl,
 } from '@/lib/encryption';
-import { storeFile } from '@/lib/persistent-store';
-import { cacheFile } from '@/lib/temp-cache';
 import { uploadToSupabase, createShareRecord, isSupabaseConfigured } from '@/lib/supabase';
 
 // Configure for large file uploads - 5 minutes max for Vercel hobby plan
@@ -82,102 +79,72 @@ export async function POST(request: NextRequest) {
 
     const expiryDate = calculateExpiryDate(expiryDays);
 
-    const fileShareData: FileShareData = {
-      id: `${fileId}-${accessToken}`,
-      fileId,
-      fileName: file.name,
-      fileSize: file.size,
-      fileType: file.type,
-      fileData: encryptedData,
-      uploadedBy: 'anonymous',
-      uploadedAt: new Date(),
-      expiresAt: expiryDate,
-      downloadCount: 0,
-      maxDownloads,
-      accessToken,
-      isDownloaded: false,
-    };
-
-    // Save to in-memory database (local development)
-    saveFileShare(fileShareData);
-
-    // Also store in persistent store for Vercel
-    storeFile({
-      fileId,
-      fileName: file.name,
-      fileSize: file.size,
-      fileType: file.type,
-      encryptedData: encryptedData,
-      accessToken,
-      expiresAt: expiryDate,
-      maxDownloads,
-      downloadCount: 0,
-      uploadedAt: new Date(),
-    });
-
-    // Also cache in temporary cache (15 min TTL) for cross-request access
-    cacheFile(fileId, {
-      encryptedData: encryptedData,
-      fileName: file.name,
-      fileSize: file.size,
-      fileType: file.type,
-      expiresAt: expiryDate.getTime(),
-      createdAt: Date.now(),
-    });
-
-    console.log(`[Upload] File stored: ${file.name} (${fileId})`);
-
     // Upload encrypted file to Supabase Storage
-    if (isSupabaseConfigured()) {
-      console.log(`[Upload] Uploading to Supabase Storage...`);
-      
-      // Convert encryptedData to buffer if it's a string
-      let fileBuffer: Buffer;
-      if (typeof encryptedData === 'string') {
-        try {
-          // If it's JSON array format (large files), store as is
-          if (encryptedData.startsWith('[')) {
-            fileBuffer = Buffer.from(encryptedData, 'utf8');
-          } else {
-            fileBuffer = Buffer.from(encryptedData, 'base64');
-          }
-        } catch {
-          fileBuffer = Buffer.from(encryptedData, 'utf8');
-        }
-      } else {
-        fileBuffer = encryptedData as any as Buffer;
-      }
-
-      const uploadResult = await uploadToSupabase(fileId, fileBuffer, {
-        originalName: file.name,
-        fileType: file.type,
-        fileSize: file.size.toString(),
-      });
-
-      if (uploadResult.error) {
-        console.error(`[Upload] Supabase upload failed:`, uploadResult.error);
-      } else {
-        console.log(`[Upload] File uploaded to Supabase: ${uploadResult.path}`);
-        
-        // Create share record in Supabase database
-        const shareRecordResult = await createShareRecord({
-          id: `${fileId}-${accessToken}`,
-          fileName: file.name,
-          fileSize: file.size,
-          encryptedKey: fileId,
-          accessToken,
-          expiresAt: expiryDate.toISOString(),
-          maxDownloads,
-          createdBy: 'anonymous',
-        });
-
-        if (shareRecordResult.error) {
-          console.error(`[Upload] Failed to create share record:`, shareRecordResult.error);
-        } else {
-          console.log(`[Upload] Share record created in Supabase`);
-        }
-      }
+    if (!isSupabaseConfigured()) {
+      return NextResponse.json(
+        { error: 'Supabase not configured. Cloud storage unavailable.' },
+        { status: 503, headers }
+      );
     }
+
+    console.log(`[Upload] Uploading to Supabase Storage...`);
+    
+    // Convert encryptedData to buffer
+    let fileBuffer: Buffer;
+    if (typeof encryptedData === 'string') {
+      try {
+        // If it's JSON array format (large files), store as is
+        if (encryptedData.startsWith('[')) {
+          fileBuffer = Buffer.from(encryptedData, 'utf8');
+        } else {
+          fileBuffer = Buffer.from(encryptedData, 'base64');
+        }
+      } catch {
+        fileBuffer = Buffer.from(encryptedData, 'utf8');
+      }
+    } else {
+      fileBuffer = encryptedData as any as Buffer;
+    }
+
+    const uploadResult = await uploadToSupabase(fileId, fileBuffer, {
+      originalName: file.name,
+      fileType: file.type,
+      fileSize: file.size.toString(),
+    });
+
+    if (uploadResult.error) {
+      console.error(`[Upload] Supabase upload failed:`, uploadResult.error);
+      return NextResponse.json(
+        { error: 'Failed to upload file to storage' },
+        { status: 500, headers }
+      );
+    }
+
+    console.log(`[Upload] File uploaded to Supabase: ${uploadResult.path}`);
+    
+    // Create share record in Supabase database with proper UUID
+    const shareRecordId = uuidv4(); // Generate proper UUID for the record ID
+    
+    const shareRecordResult = await createShareRecord({
+      id: shareRecordId,
+      fileName: file.name,
+      fileSize: file.size,
+      encryptedKey: fileId,
+      accessToken,
+      expiresAt: expiryDate.toISOString(),
+      maxDownloads,
+      createdBy: 'anonymous',
+    });
+
+    if (shareRecordResult.error) {
+      console.error(`[Upload] Failed to create share record:`, shareRecordResult.error);
+      return NextResponse.json(
+        { error: 'Failed to create share record' },
+        { status: 500, headers }
+      );
+    }
+
+    console.log(`[Upload] Share record created in Supabase with ID: ${shareRecordId}`);
 
     // Return response with file metadata and encrypted data
     // Client will store encrypted data in sessionStorage for same-session access
@@ -190,7 +157,7 @@ export async function POST(request: NextRequest) {
         accessToken,
         fileName: file.name,
         fileSize: file.size,
-        expiresAt: fileShareData.expiresAt,
+        expiresAt: expiryDate.toISOString(),
         shareUrl,
         encryptedData: encryptedData, // Send encrypted data to client
         maxDownloads,
