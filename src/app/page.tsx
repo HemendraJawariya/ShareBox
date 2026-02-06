@@ -24,11 +24,11 @@ export default function Home() {
               Share Files Instantly
               <br />
               <span className="bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
-                with QR Codes
+                
               </span>
             </h1>
             <p className="text-lg md:text-xl text-gray-600 max-w-2xl mx-auto">
-              Fast, secure, and beautiful file sharing. Drop your files, get a QR code, and share with anyone.
+              Fast, secure, and beautiful file sharing. Drop your files, and share with anyone.
             </p>
           </div>
 
